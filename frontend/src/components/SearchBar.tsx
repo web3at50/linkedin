@@ -26,7 +26,7 @@ export function SearchBar({ onSearch, isLoading = false }: SearchBarProps) {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="text"
-          placeholder="e.g., Headteachers in London academy trusts"
+          placeholder="Search role/location or paste a LinkedIn profile URL"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           disabled={isLoading}
