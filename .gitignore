@@ -1,0 +1,8 @@
+Keys/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/node_modules/
+frontend/.next/
+frontend/_git_upstream/
+*.log
