@@ -8,8 +8,10 @@ const BRIGHTDATA_API_URL = 'https://api.brightdata.com/request';
 
 interface BrightDataGoogleSearchResult {
   title: string;
-  link: string;
+  link?: string;
+  url?: string;
   snippet?: string;
+  description?: string;
   position?: number;
 }
 
@@ -38,13 +40,36 @@ function getApiHeaders() {
   };
 }
 
+type BrightDataSearchMode = 'unlocker' | 'serp';
+
+function getSearchZoneName(): string {
+  return process.env.BRIGHTDATA_SEARCH_ZONE || process.env.BRIGHTDATA_UNLOCKER_ZONE || 'unblocker';
+}
+
+function getSearchMode(zoneName: string): BrightDataSearchMode {
+  const configured = process.env.BRIGHTDATA_SEARCH_PRODUCT?.toLowerCase();
+  if (configured === 'serp') return 'serp';
+  if (configured === 'unlocker') return 'unlocker';
+  return /serp/i.test(zoneName) ? 'serp' : 'unlocker';
+}
+
 /**
  * Build Google search URL with JSON response format and geolocation
  */
-function buildGoogleSearchUrl(query: string, page: number = 0, countryCode?: string | null): string {
+function buildGoogleSearchUrl(
+  query: string,
+  page: number = 0,
+  countryCode?: string | null,
+  options?: { includeBrightDataJsonParam?: boolean },
+): string {
   const encodedQuery = encodeURIComponent(query);
   const start = page * 10;
-  let url = `https://www.google.com/search?q=${encodedQuery}&start=${start}&brd_json=1`;
+  const includeBrightDataJsonParam = options?.includeBrightDataJsonParam ?? true;
+  let url = `https://www.google.com/search?q=${encodedQuery}&start=${start}`;
+
+  if (includeBrightDataJsonParam) {
+    url += '&brd_json=1';
+  }
 
   if (countryCode) {
     url += `&gl=${countryCode.toUpperCase()}`;
@@ -61,29 +86,43 @@ export async function searchGoogle(
   page: number = 0,
   countryCode?: string | null,
 ): Promise<BrightDataGoogleSearchResponse> {
-  const unlockerZone = process.env.BRIGHTDATA_UNLOCKER_ZONE || 'unblocker';
-  const searchUrl = buildGoogleSearchUrl(query, page, countryCode);
+  const searchZone = getSearchZoneName();
+  const searchMode = getSearchMode(searchZone);
+  const searchUrl = buildGoogleSearchUrl(query, page, countryCode, {
+    includeBrightDataJsonParam: searchMode === 'unlocker',
+  });
 
   try {
+    const body: Record<string, unknown> = {
+      url: searchUrl,
+      zone: searchZone,
+      // SERP API supports structured JSON responses directly.
+      format: searchMode === 'serp' ? 'json' : 'raw',
+      method: 'GET',
+    };
+
+    if (searchMode === 'serp' && countryCode) {
+      body.country = countryCode.toLowerCase();
+    }
+
     const response = await fetch(BRIGHTDATA_API_URL, {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify({
-        url: searchUrl,
-        zone: unlockerZone,
-        format: 'raw',
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      throw new Error(`Google search failed: ${response.status} ${response.statusText}`);
+      const errorText = await response.text().catch(() => '');
+      const details = errorText ? ` - ${errorText.slice(0, 500)}` : '';
+      throw new Error(`Google search failed: ${response.status} ${response.statusText}${details}`);
     }
 
     const textData = await response.text();
-    const searchData: BrightDataGoogleSearchResponse = JSON.parse(textData);
+    const rawData = JSON.parse(textData) as unknown;
+    const searchData = normalizeSearchResponse(rawData);
 
     console.log(
-      `[Google Search] Found ${searchData.organic?.length || 0} organic results for query: "${query}"`,
+      `[Google Search] Found ${searchData.organic?.length || 0} organic results for query: "${query}" (${searchMode} zone: ${searchZone})`,
     );
 
     return searchData;
@@ -106,7 +145,8 @@ export function extractLinkedInUrls(searchResults: BrightDataGoogleSearchRespons
   const linkedInUrls: string[] = [];
 
   for (const result of searchResults.organic) {
-    const url = result.link;
+    const url = result.link ?? result.url;
+    if (!url) continue;
 
     if (isValidLinkedInProfileUrl(url)) {
       const cleanUrl = normalizeLinkedInUrl(url);
@@ -143,12 +183,59 @@ function normalizeLinkedInUrl(url: string): string {
 }
 
 function normalizeGoogleResult(result: BrightDataGoogleSearchResult, index: number): GoogleSearchResult {
+  const link = result.link ?? result.url ?? '';
   return {
     title: result.title,
-    link: result.link,
-    description: result.snippet ?? '',
+    link,
+    description: result.snippet ?? result.description ?? '',
     position: result.position ?? index + 1,
   };
+}
+
+function normalizeSearchResponse(rawData: unknown): BrightDataGoogleSearchResponse {
+  if (!rawData || typeof rawData !== 'object') {
+    return {};
+  }
+
+  const record = rawData as Record<string, unknown>;
+
+  if (Array.isArray(record.organic)) {
+    return record as unknown as BrightDataGoogleSearchResponse;
+  }
+
+  if (Array.isArray(record.organic_results)) {
+    return {
+      organic: (record.organic_results as BrightDataGoogleSearchResult[]).map((item, index) => ({
+        title: item.title ?? '',
+        link: item.link ?? item.url,
+        url: item.url,
+        snippet: item.snippet ?? item.description,
+        description: item.description,
+        position: item.position ?? index + 1,
+      })),
+    };
+  }
+
+  if (record.results && typeof record.results === 'object') {
+    const nested = record.results as Record<string, unknown>;
+    if (Array.isArray(nested.organic)) {
+      return { organic: nested.organic as BrightDataGoogleSearchResult[] };
+    }
+    if (Array.isArray(nested.organic_results)) {
+      return {
+        organic: (nested.organic_results as BrightDataGoogleSearchResult[]).map((item, index) => ({
+          title: item.title ?? '',
+          link: item.link ?? item.url,
+          url: item.url,
+          snippet: item.snippet ?? item.description,
+          description: item.description,
+          position: item.position ?? index + 1,
+        })),
+      };
+    }
+  }
+
+  return record as unknown as BrightDataGoogleSearchResponse;
 }
 
 function extractLinkedInId(url: string): string {
