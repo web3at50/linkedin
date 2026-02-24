@@ -43,7 +43,12 @@ function getApiHeaders() {
 type BrightDataSearchMode = 'unlocker' | 'serp';
 
 function getSearchZoneName(): string {
-  return process.env.BRIGHTDATA_SEARCH_ZONE || process.env.BRIGHTDATA_UNLOCKER_ZONE || 'unblocker';
+  return (
+    process.env.BRIGHTDATA_SEARCH_ZONE ||
+    process.env.BRIGHTDATA_SERP_ZONE ||
+    process.env.BRIGHTDATA_UNLOCKER_ZONE ||
+    'unblocker'
+  );
 }
 
 function getSearchMode(zoneName: string): BrightDataSearchMode {
@@ -96,9 +101,9 @@ export async function searchGoogle(
     const body: Record<string, unknown> = {
       url: searchUrl,
       zone: searchZone,
-      // SERP API supports structured JSON responses directly.
-      format: searchMode === 'serp' ? 'json' : 'raw',
-      method: 'GET',
+      // Bright Data /request examples use format=raw for both Unlocker and SERP.
+      // For SERP, the zone's configured output format controls whether the payload is parsed JSON vs HTML.
+      format: 'raw',
     };
 
     if (searchMode === 'serp' && countryCode) {
