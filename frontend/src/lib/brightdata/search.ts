@@ -65,15 +65,20 @@ function buildGoogleSearchUrl(
   query: string,
   page: number = 0,
   countryCode?: string | null,
-  options?: { includeBrightDataJsonParam?: boolean },
+  options?: { includeBrightDataJsonParam?: boolean; includeBrightDataMobileParam?: boolean },
 ): string {
   const encodedQuery = encodeURIComponent(query);
   const start = page * 10;
   const includeBrightDataJsonParam = options?.includeBrightDataJsonParam ?? true;
+  const includeBrightDataMobileParam = options?.includeBrightDataMobileParam ?? false;
   let url = `https://www.google.com/search?q=${encodedQuery}&start=${start}`;
 
   if (includeBrightDataJsonParam) {
     url += '&brd_json=1';
+  }
+
+  if (includeBrightDataMobileParam) {
+    url += '&brd_mobile=desktop';
   }
 
   if (countryCode) {
@@ -95,6 +100,7 @@ export async function searchGoogle(
   const searchMode = getSearchMode(searchZone);
   const searchUrl = buildGoogleSearchUrl(query, page, countryCode, {
     includeBrightDataJsonParam: searchMode === 'unlocker',
+    includeBrightDataMobileParam: searchMode === 'serp',
   });
 
   try {
@@ -117,6 +123,13 @@ export async function searchGoogle(
     });
 
     if (!response.ok) {
+      console.error('[Google Search] Bright Data request failed', {
+        status: response.status,
+        statusText: response.statusText,
+        searchMode,
+        searchZone,
+        searchUrl,
+      });
       const errorText = await response.text().catch(() => '');
       const details = errorText ? ` - ${errorText.slice(0, 500)}` : '';
       throw new Error(`Google search failed: ${response.status} ${response.statusText}${details}`);
